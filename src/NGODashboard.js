@@ -5,6 +5,14 @@ import "./NGODashboard.css";
 
 const API = "https://unityflow-backend.onrender.com";
 
+const SECTOR_ICONS = {
+  "Flood Relief":  "🌊",
+  "Healthcare":    "🏥",
+  "Food & Hunger": "🍱",
+  "Education":     "📚",
+  "Women Safety":  "🛡️",
+};
+
 const SECTOR_COLORS = {
   "Flood Relief":  "#3b82f6",
   "Healthcare":    "#ef4444",
@@ -14,9 +22,9 @@ const SECTOR_COLORS = {
 };
 
 const URGENCY_COLOR = (u) => {
-  if (u >= 4) return "#ef4444"; // red
-  if (u === 3) return "#f97316"; // orange
-  return "#22c55e";              // green
+  if (u >= 4) return "#ef4444";
+  if (u === 3) return "#f97316";
+  return "#22c55e";
 };
 
 const URGENCY_LABEL = (u) => {
@@ -28,44 +36,50 @@ const URGENCY_LABEL = (u) => {
 function RecenterMap({ tasks }) {
   const map = useMap();
   useEffect(() => {
-    if (tasks.length > 0) {
-      map.setView([tasks[0].latitude, tasks[0].longitude], 12);
-    }
+    if (tasks.length > 0) map.setView([tasks[0].latitude, tasks[0].longitude], 12);
   }, [tasks, map]);
   return null;
 }
 
+function Spinner() {
+  return <div className="spinner-wrap"><div className="spinner" /></div>;
+}
+
 export default function NGODashboard() {
-  const [tasks, setTasks]             = useState([]);
-  const [filtered, setFiltered]       = useState([]);
-  const [selected, setSelected]       = useState(null);
-  const [matches, setMatches]         = useState([]);
+  const [tasks, setTasks]               = useState([]);
+  const [filtered, setFiltered]         = useState([]);
+  const [selected, setSelected]         = useState(null);
+  const [matches, setMatches]           = useState([]);
   const [loadingMatch, setLoadingMatch] = useState(false);
+  const [loadingTasks, setLoadingTasks] = useState(true);
   const [activeSector, setActiveSector] = useState("All");
   const [assignedTasks, setAssignedTasks] = useState({});
+  const [justAssigned, setJustAssigned] = useState(null);
   const pollRef = useRef(null);
 
   const SECTORS = ["All", "Flood Relief", "Healthcare", "Food & Hunger", "Education", "Women Safety"];
 
-  // Fetch tasks
-  const fetchTasks = async () => {
+  const fetchTasks = async (showSpinner = false) => {
+    if (showSpinner) setLoadingTasks(true);
     try {
       const res = await fetch(`${API}/api/tasks`);
       const data = await res.json();
+      // Sort by urgency descending
+      data.sort((a, b) => b.urgency - a.urgency);
       setTasks(data);
     } catch (err) {
       console.error("Failed to fetch tasks", err);
+    } finally {
+      setLoadingTasks(false);
     }
   };
 
-  // Poll every 10 seconds
   useEffect(() => {
-    fetchTasks();
-    pollRef.current = setInterval(fetchTasks, 10000);
+    fetchTasks(true);
+    pollRef.current = setInterval(() => fetchTasks(false), 10000);
     return () => clearInterval(pollRef.current);
   }, []);
 
-  // Filter by sector
   useEffect(() => {
     if (activeSector === "All") setFiltered(tasks);
     else setFiltered(tasks.filter(t => t.sector === activeSector));
@@ -93,9 +107,11 @@ export default function NGODashboard() {
         body: JSON.stringify({ volunteer_id: volunteerId }),
       });
       setAssignedTasks(prev => ({ ...prev, [taskId]: volunteerName }));
+      setJustAssigned(volunteerName);
+      setTimeout(() => setJustAssigned(null), 2500);
       setMatches([]);
       setSelected(null);
-      fetchTasks();
+      fetchTasks(false);
     } catch (err) {
       console.error("Assign failed", err);
     }
@@ -109,6 +125,11 @@ export default function NGODashboard() {
 
   return (
     <div className="dashboard">
+      {/* Toast */}
+      {justAssigned && (
+        <div className="toast">✅ {justAssigned} assigned successfully</div>
+      )}
+
       {/* Header */}
       <div className="dashboard-header">
         <div className="header-left">
@@ -124,34 +145,34 @@ export default function NGODashboard() {
       <div className="dashboard-body">
         {/* Sidebar */}
         <div className="sidebar">
-          {/* Sector filters */}
           <div className="sector-filters">
             {SECTORS.map(s => (
               <button
                 key={s}
                 className={`sector-btn ${activeSector === s ? "active" : ""}`}
                 style={activeSector === s && s !== "All"
-                  ? { borderColor: SECTOR_COLORS[s], color: SECTOR_COLORS[s] }
+                  ? { borderColor: SECTOR_COLORS[s], color: SECTOR_COLORS[s], background: SECTOR_COLORS[s] + "18" }
                   : {}}
                 onClick={() => setActiveSector(s)}
               >
-                {s}
+                {SECTOR_ICONS[s] && <span>{SECTOR_ICONS[s]} </span>}{s}
               </button>
             ))}
           </div>
 
-          {/* Task list */}
           <div className="task-list">
-            {filtered.length === 0 && (
+            {loadingTasks && <Spinner />}
+            {!loadingTasks && filtered.length === 0 && (
               <div className="empty">No tasks found</div>
             )}
-            {filtered.map(task => (
+            {!loadingTasks && filtered.map(task => (
               <div
                 key={task._id}
                 className={`task-card ${selected?._id === task._id ? "task-card-active" : ""}`}
                 onClick={() => findVolunteers(task)}
               >
                 <div className="task-card-top">
+                  <span className="sector-icon">{SECTOR_ICONS[task.sector]}</span>
                   <span
                     className="sector-badge"
                     style={{ background: SECTOR_COLORS[task.sector] + "22", color: SECTOR_COLORS[task.sector] }}
@@ -177,16 +198,8 @@ export default function NGODashboard() {
 
         {/* Map */}
         <div className="map-wrapper">
-          <MapContainer
-            center={[12.9716, 77.5946]}
-            zoom={12}
-            className="leaflet-map"
-            zoomControl={true}
-          >
-            <TileLayer
-              attribution='&copy; OpenStreetMap'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
+          <MapContainer center={[12.9716, 77.5946]} zoom={12} className="leaflet-map" zoomControl={true}>
+            <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
             <RecenterMap tasks={filtered} />
             {filtered.map(task => (
               <CircleMarker
@@ -200,15 +213,14 @@ export default function NGODashboard() {
                 eventHandlers={{ click: () => findVolunteers(task) }}
               >
                 <Popup>
-                  <strong>{task.sector}</strong><br />
+                  <strong>{SECTOR_ICONS[task.sector]} {task.sector}</strong><br />
                   {task.description}<br />
-                  <em>Urgency: {task.urgency}/5</em>
+                  <em>Urgency: {task.urgency}/5 — {URGENCY_LABEL(task.urgency)}</em>
                 </Popup>
               </CircleMarker>
             ))}
           </MapContainer>
 
-          {/* Legend */}
           <div className="map-legend">
             <div className="legend-item"><span style={{background:"#ef4444"}} />Critical (4-5)</div>
             <div className="legend-item"><span style={{background:"#f97316"}} />Medium (3)</div>
@@ -227,12 +239,17 @@ export default function NGODashboard() {
             </div>
             <div className="modal-task-info">
               <span className="sector-badge" style={{ background: SECTOR_COLORS[selected.sector] + "22", color: SECTOR_COLORS[selected.sector] }}>
-                {selected.sector}
+                {SECTOR_ICONS[selected.sector]} {selected.sector}
               </span>
               <p>{selected.description}</p>
             </div>
 
-            {loadingMatch && <div className="loading">Matching volunteers...</div>}
+            {loadingMatch && (
+              <div className="loading">
+                <div className="spinner" style={{margin:"0 auto 8px"}} />
+                Matching volunteers...
+              </div>
+            )}
 
             {!loadingMatch && matches.map((m, i) => (
               <div key={m.volunteer_id} className="match-card">
@@ -240,6 +257,12 @@ export default function NGODashboard() {
                 <div className="match-info">
                   <div className="match-name">{m.volunteer_name}</div>
                   <div className="match-reason">{m.reason_text}</div>
+                  {m.distance_km != null && (
+                    <div className="match-distance">📍 {Number(m.distance_km).toFixed(1)} km away</div>
+                  )}
+                  <div className="score-bar-wrap">
+                    <div className="score-bar" style={{width: `${m.score}%`}} />
+                  </div>
                 </div>
                 <div className="match-score-block">
                   <div className="match-score">{m.score}%</div>
